@@ -2,12 +2,17 @@
 //
 
 #include <iostream>
+#include "WinSock2.h" // 得放在最上面，不然会报未定义标识符
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
+#include <Windows.h>
+#include <process.h>
 extern "C"
 {
 #include <openssl/applink.c>
 };
+
+using namespace std;
 
 void PkicaSslLibrariInit()
 {
@@ -98,8 +103,8 @@ int PkicaSignX509Cert(EVP_PKEY* keyPair, X509** rootca)
     return 0;
 }
 
-#define EXAMPLE_MACRO_NAME
-int main()
+// 生成证书系统
+int PkicaGenerateCertfile(void)
 {
     EVP_PKEY* keyPair = nullptr;
     X509* rootca = nullptr;
@@ -116,10 +121,160 @@ int main()
     if (keyFile != nullptr) {
         PEM_write_PrivateKey(keyFile, keyPair, nullptr, nullptr, 0, nullptr, nullptr);
     }
-    
+
     fopen_s(&certFile, "./rootcert.cer", "w");
     if (certFile != nullptr) {
         PEM_write_X509(certFile, rootca);
     }
+
+    // 签发subca
+
+
+    // 签发设备证书
+
+
+    // 使用设备证书签名
+
+    // 验证签名
+
+    // 验证证书链
+    return 0;
+}
+
+// 证书文件检查
+int PkicaCheckCertFile()
+{
+    return 0;
+}
+
+int PkicaCheckCertState()
+{
+    if (PkicaCheckCertFile() == 0) {
+        PkicaGenerateCertfile();
+    } else {
+        cout << "prikey match sucess!" << endl;
+    }
+    return 0;
+}
+
+void ClientThreadProc(void* arg)
+{
+    WORD sockVersion = MAKEWORD(2, 2);
+    WSADATA data;
+    if (WSAStartup(sockVersion, &data) != 0) {
+        return;
+    }
+    
+    SOCKET sclient = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sclient == INVALID_SOCKET) {
+        printf("invalid socket!");
+        return;
+    }
+
+    sockaddr_in serAddr;
+    serAddr.sin_family = AF_INET;
+    serAddr.sin_port = htons(8888);
+    serAddr.sin_addr.S_un.S_addr = inet_addr("192.168.199.194");
+    if (connect(sclient, (sockaddr*)&serAddr, sizeof(serAddr)) == SOCKET_ERROR) { //连接失败 
+        printf("connect error !");
+        closesocket(sclient);
+        return;
+    }
+
+    const char* sendData = "123456";
+    send(sclient, sendData, strlen(sendData), 0);
+    //send()用来将数据由指定的socket传给对方主机
+    //int send(int s, const void * msg, int len, unsigned int flags)
+    //s为已建立好连接的socket，msg指向数据内容，len则为数据长度，参数flags一般设0
+    //成功则返回实际传送出去的字符数，失败返回-1，错误原因存于error 
+
+    char recData[255] = {0};
+    int ret = recv(sclient, recData, 255, 0);
+    if (ret > 0) {
+        printf("\r\n Client get recData = %s. \r\n", recData);
+    }
+    closesocket(sclient);
+    WSACleanup();
+}
+
+void ServerThreadProc(void* arg)
+{
+    //初始化WSA  
+    WORD sockVersion = MAKEWORD(2, 2);
+    WSADATA wsaData;
+    if (WSAStartup(sockVersion, &wsaData) != 0) {
+        return;
+    }
+
+    //创建套接字  
+    SOCKET slisten = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (slisten == INVALID_SOCKET) {
+        printf("socket error !");
+        return;
+    }
+
+    //绑定IP和端口  
+    sockaddr_in sin;
+    sin.sin_family = AF_INET;
+    sin.sin_port = htons(8888);
+    sin.sin_addr.S_un.S_addr = INADDR_ANY;
+    if (bind(slisten, (LPSOCKADDR)&sin, sizeof(sin)) == SOCKET_ERROR) {
+        printf("bind error !");
+    }
+
+    //开始监听  
+    if (listen(slisten, 5) == SOCKET_ERROR) {
+        printf("listen error !");
+        return;
+    }
+
+    //循环接收数据  
+    SOCKET sClient;
+    sockaddr_in remoteAddr;
+    int nAddrlen = sizeof(remoteAddr);
+    char revData[255] = {0};
+    static unsigned int cnt = 0;
+    while (true)
+    {
+        printf("等待连接... cnt = %u. \n", cnt++);
+        sClient = accept(slisten, (SOCKADDR*)&remoteAddr, &nAddrlen);
+        if (sClient == INVALID_SOCKET) {
+            printf("accept error !");
+            continue;
+        }
+        printf("Server 接受到一个连接：%s \r\n", inet_ntoa(remoteAddr.sin_addr));
+
+        //接收数据
+        int ret = recv(sClient, revData, 255, 0);
+        if (ret > 0) {
+            printf("\r\n Server receive revData = %s. \r\n", revData);
+            /*revData[ret] = 0x00;
+            printf(revData);*/
+        }
+
+        //发送数据  
+        const char* sendData = "你好，TCP客户端！\n";
+        send(sClient, sendData, strlen(sendData), 0);
+        closesocket(sClient);
+    }
+
+    closesocket(slisten);
+    WSACleanup();
+}
+
+int main()
+{
+    HANDLE h1, h2;
+    // 检查证书：rootca.cer->subca.cer->client.cer/server.cer
+    PkicaCheckCertState();
+
+    // 启动线程1创建client-socket-client.cer
+    h1 = (HANDLE)_beginthread(ClientThreadProc, 0, NULL);
+    // 启动线程2创建client-server-server.cer
+    h2 = (HANDLE)_beginthread(ServerThreadProc, 0, NULL);
+
+    WaitForSingleObject(h1, INFINITE);//等待线程1结束
+    WaitForSingleObject(h2, INFINITE);//等待线程2结束
+
     return 0;
 }
